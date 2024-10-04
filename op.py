@@ -9,6 +9,7 @@ from torch import nn
 import torch
 import torch.fft as fft
 from torch import nn
+import torch.nn.functional as F
 
 def loaddata(psfname, imgname, f, show_im=True):
     psf = Image.open(psfname)
@@ -16,9 +17,20 @@ def loaddata(psfname, imgname, f, show_im=True):
     data = Image.open(imgname)
     data = torch.tensor(np.array(data), dtype=torch.float32)
     
+    # if image is RGB, convert to grayscale
+    if len(data.shape) == 3:
+        data = torch.mean(data, dim=2)
+    if data.shape != psf.shape:
+        data = F.interpolate(data.unsqueeze(0).unsqueeze(0), 
+                             size=psf.shape, 
+                             mode='bilinear', 
+                             align_corners=False).squeeze(0).squeeze(0)
+    
     bg = torch.mean(psf[5:15,5:15])
     psf -= bg
     data -= bg
+    print(psf.shape)
+    print(data.shape)
     
     def resize(img, factor):
         num = int(-torch.log2(torch.tensor(factor)).item())
@@ -67,3 +79,21 @@ class ImageReconstructor(torch.nn.Module):
         return reconstruct[self.starti:self.endi, self.startj:self.endj].real
     def crop(self):
         return self.v[self.starti:self.endi, self.startj:self.endj].real
+    def simulate_measurement(self, input_image, noise_level=0.01):
+        if input_image.shape != self.init_shape:
+            print("in future please resize the image before passing it to simulate_measurement")
+            input_image = F.interpolate(input_image.unsqueeze(0).unsqueeze(0), 
+                                    size=self.init_shape, 
+                                    mode='bilinear', 
+                                    align_corners=False).squeeze(0).squeeze(0)
+
+        padded_input = torch.zeros(self.padded_shape, device=input_image.device)
+        padded_input[self.starti:self.endi, self.startj:self.endj] = input_image
+
+        input_fft = fft.fft2(padded_input, norm="ortho")
+        blurred_fft = self.H * input_fft
+        blurred = fft.ifftshift(fft.ifft2(blurred_fft, norm="ortho")).real
+        blurred = blurred[self.starti:self.endi, self.startj:self.endj]
+        noise = torch.randn_like(blurred) * noise_level
+        measured = blurred + noise
+        return measured
