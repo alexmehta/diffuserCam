@@ -8,7 +8,27 @@ from op import ImageReconstructor, loaddata
 from tqdm import trange
 import imageio
 torch.manual_seed(0)
+def PnPReconstruction(meas_func, x, iters=1000):
+    import deepinv
+    from deepinv.utils.plotting import plot, plot_curves
+    class Phys(deepinv.physics.LinearPhysics):
+        def __init__(self, process):
+            super().__init__()
+            self.process = process
+        def forward(self, x):
+            return self.process(x)
+    phys = Phys(meas_func)
+    y = phys(x)
+    prior = deepinv.optim.prior.PnP(denoiser=deepinv.models.DnCNN(in_channels=1, out_channels=1, pretrained="download").to(y.device))
+    model = deepinv.optim.optimizers.optim_builder(iteration='PGD', prior=prior, data_fidelity=deepinv.optim.data_fidelity.L2(), max_iter=iters, verbose=True).to(y.device).eval()
+    
+    result, metrics = model(y.unsqueeze(dim=0), phys, x_gt=x.unsqueeze(dim=0), compute_metrics=True)
+    # mse between the final result and the ground truth
+    print(f"Final MSE: {torch.nn.functional.mse_loss(result, x).item()}")
+    plot_curves(metrics, save_dir="curves/", show=False)
 
+    return result.squeeze(dim=0).squeeze(dim=0), result
+    
 def grad_descent(h, b, iters, save_interval):
     model = ImageReconstructor(h).to(h.device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
@@ -29,21 +49,9 @@ def grad_descent(h, b, iters, save_interval):
             image = model.crop()
             frame = (image.detach().cpu().numpy() * 255).astype(np.uint8)
             frames.append(frame)
+    
     return model.crop().detach(), frames
 
-def PnPReconstruction(meas_func, y, iters=1000):
-    import deepinv
-    class Phys(deepinv.physics.LinearPhysics):
-        def __init__(self, process):
-            super().__init__()
-            self.process = process
-        def forward(self, x):
-            return self.process(x)
-    phys = Phys(meas_func)
-    prior = deepinv.optim.prior.PnP(denoiser=deepinv.models.DnCNN(in_channels=1, out_channels=1).to(y.device))
-    model = deepinv.optim.optimizers.optim_builder(iteration='PGD', prior=prior, data_fidelity=deepinv.optim.data_fidelity.L2(), max_iter=iters).to(y.device)
-    y = model(y.unsqueeze(dim=0), phys)
-    return y, y
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description='Reconstruct an image from a PSF')
@@ -60,29 +68,28 @@ if __name__ == "__main__":
     psf, data = loaddata(args.psf_path, args.img_path, args.f, show_im=False)
     psf, data = psf.to(device), data.to(device)
     original_img = data
-    if args.show_imgs:
-        plt.imshow(data.cpu().numpy(), cmap='gray')
-        plt.title('Original GT')
-        plt.show()
-    data = ImageReconstructor(psf).to(device).simulate_measurement(data, noise_level=0.0000000).to(device)
-    data /= torch.norm(data.flatten())
-    if args.show_imgs:
-        plt.imshow(data.cpu().numpy(), cmap='gray')
-        plt.title('Raw data')
-        plt.show()
-    # final_im, frames = grad_descent(psf, data, args.iters, args.save_interval)
-    final_im, frames = PnPReconstruction(lambda x : ImageReconstructor(psf).to(device).simulate_measurement(x, noise_level=0.0000000), data, args.iters)
+    # if args.show_imgs:
+    #     plt.imshow(data.cpu().numpy(), cmap='gray')
+    #     plt.title('Original GT')
+    #     plt.show()
+    # data = ImageReconstructor(psf).to(device).simulate_measurement(data, noise_level=0.0000000).to(device)
+    # data /= torch.norm(data.flatten())
+    # if args.show_imgs:
+    #     plt.imshow(data.cpu().numpy(), cmap='gray')
+    #     plt.title('Raw data')
+    #     plt.show()
+    final_im, frames = PnPReconstruction(lambda x: ImageReconstructor(psf).to(device).simulate_measurement(x, noise_level=0.000000001).to(device), original_img, args.iters)
 
-    if args.gif_save:
-        imageio.mimsave('reconstruction.gif', frames.detach().cpu(), format='GIF', duration=0.1) 
-    print(f"Reconstruction process saved as 'reconstruction.gif'")
+    # final_im, frames = grad_descent(psf, data, args.iters, args.save_interval)
+    # if args.gif_save:
+        # imageio.mimsave('reconstruction.gif', frames, format='GIF', duration=0.1) 
     plt.figure(figsize=(10, 10))
-    plt.imshow(final_im.detach().squeeze(dim=0).cpu().numpy(), cmap='gray')
-    plt.title(f'Final reconstruction after {args.iters} iterations')
-    plt.axis('off')
-    plt.savefig('final_reconstruction.png', bbox_inches='tight')
-    print("Final reconstruction saved as 'final_reconstruction.png'")
-    print(f'PSNR: {10 * torch.log10(1 / torch.nn.functional.mse_loss(final_im, original_img)).item()}')
+    plt.subplot(1, 2, 1)
     plt.imshow(original_img.cpu().numpy(), cmap='gray')
+    plt.title('Original GT')
+    plt.subplot(1, 2, 2)
+    plt.imshow(final_im.detach().cpu().numpy(), cmap='gray')
+    plt.title(f'Final reconstruction after {args.iters} iterations')
+    plt.savefig('comparison.png', bbox_inches='tight')
     if args.show_imgs:
         plt.show()

@@ -29,9 +29,6 @@ def loaddata(psfname, imgname, f, show_im=True):
     bg = torch.mean(psf[5:15,5:15])
     psf -= bg
     data -= bg
-    print(psf.shape)
-    print(data.shape)
-    
     def resize(img, factor):
         num = int(-torch.log2(torch.tensor(factor)).item())
         for _ in range(num):
@@ -44,15 +41,15 @@ def loaddata(psfname, imgname, f, show_im=True):
     psf /= torch.norm(psf.flatten())
     data /= torch.norm(data.flatten())
     
-    if show_im:
-        fig1 = plt.figure()
-        plt.imshow(psf.cpu().numpy(), cmap='gray')
-        plt.title('PSF')
-        plt.show()
-        fig2 = plt.figure()
-        plt.imshow(data.cpu().numpy(), cmap='gray')
-        plt.title('Raw data')
-        plt.show()
+    # if show_im:
+    #     fig1 = plt.figure()
+    #     plt.imshow(psf.cpu().numpy(), cmap='gray')
+    #     plt.title('PSF')
+    #     plt.show()
+    #     fig2 = plt.figure()
+    #     plt.imshow(data.cpu().numpy(), cmap='gray')
+    #     plt.title('Raw data')
+    #     plt.show()
     return psf, data
 
 def nextPow2(n):
