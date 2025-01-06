@@ -1,16 +1,13 @@
 import torch
-import torch.fft as fft
 import matplotlib.pyplot as plt
-from PIL import Image
 import numpy as np
-import yaml
 from op import ImageReconstructor, loaddata
 from tqdm import trange
 import imageio
+from deepinv.utils.plotting import plot, plot_curves
+import deepinv
 torch.manual_seed(0)
 def PnPReconstruction(meas_func, x, iters=1000):
-    import deepinv
-    from deepinv.utils.plotting import plot, plot_curves
     class Phys(deepinv.physics.LinearPhysics):
         def __init__(self, process):
             super().__init__()
@@ -34,7 +31,6 @@ def grad_descent(h, b, iters, save_interval):
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
     def non_neg(xi):
         return torch.clamp(xi, min=0)
-    
     frames = []
     for iteration in trange(iters):
         optimizer.zero_grad()
@@ -63,33 +59,36 @@ if __name__ == "__main__":
     parser.add_argument('--gif_save', type=bool, default=True, help='Save a gif', required=False, action=argparse.BooleanOptionalAction)
     parser.add_argument('--mps', type=bool, default=False, help='Use MPS', required=False, action=argparse.BooleanOptionalAction)
     parser.add_argument('--show_imgs', type=bool, default=False, help='Show images', required=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument('--type', type=str, default='grad', help='Type of reconstruction to use', choices=['grad', 'pnp'])
     args = parser.parse_args()
     device = torch.device("mps" if (torch.backends.mps.is_available() and args.mps) else "cpu")
     psf, data = loaddata(args.psf_path, args.img_path, args.f, show_im=False)
     psf, data = psf.to(device), data.to(device)
     original_img = data
-    # if args.show_imgs:
-    #     plt.imshow(data.cpu().numpy(), cmap='gray')
-    #     plt.title('Original GT')
-    #     plt.show()
-    # data = ImageReconstructor(psf).to(device).simulate_measurement(data, noise_level=0.0000000).to(device)
-    # data /= torch.norm(data.flatten())
-    # if args.show_imgs:
-    #     plt.imshow(data.cpu().numpy(), cmap='gray')
-    #     plt.title('Raw data')
-    #     plt.show()
-    final_im, frames = PnPReconstruction(lambda x: ImageReconstructor(psf).to(device).simulate_measurement(x, noise_level=0.000000001).to(device), original_img, args.iters)
+    if args.show_imgs:
+        plt.imshow(data.cpu().numpy(), cmap='gray')
+        plt.title('Original GT')
+        plt.show()
+    data = ImageReconstructor(psf).to(device).simulate_measurement(data, noise_level=0.0000001).to(device)
+    data /= torch.norm(data.flatten())
+    if args.show_imgs:
+        plt.imshow(data.cpu().numpy(), cmap='gray')
+        plt.title('Raw data')
+        plt.show()
+    if args.type == 'pnp':
+        final_im, frames = PnPReconstruction(lambda x: ImageReconstructor(psf).to(device).simulate_measurement(x, noise_level=0.000000001).to(device), original_img, args.iters)
+    elif args.type == 'grad':
+        final_im, frames = grad_descent(psf, data, args.iters, args.save_interval)
+    if args.gif_save:
+        imageio.mimsave('reconstruction.gif', frames, format='GIF', duration=0.1) 
+    fig, axs = plt.subplots(1, 3)
+    axs[0].imshow(original_img.cpu().numpy(), cmap='gray')
+    axs[0].set_title('Original GT')
+    axs[1].imshow(data.cpu().numpy(), cmap='gray')
+    axs[1].set_title('Raw data')
+    axs[2].imshow(final_im.cpu().numpy(), cmap='gray')
+    axs[2].set_title('Final Reconstruction')
 
-    # final_im, frames = grad_descent(psf, data, args.iters, args.save_interval)
-    # if args.gif_save:
-        # imageio.mimsave('reconstruction.gif', frames, format='GIF', duration=0.1) 
-    plt.figure(figsize=(10, 10))
-    plt.subplot(1, 2, 1)
-    plt.imshow(original_img.cpu().numpy(), cmap='gray')
-    plt.title('Original GT')
-    plt.subplot(1, 2, 2)
-    plt.imshow(final_im.detach().cpu().numpy(), cmap='gray')
-    plt.title(f'Final reconstruction after {args.iters} iterations')
-    plt.savefig('comparison.png', bbox_inches='tight')
+   
     if args.show_imgs:
         plt.show()
