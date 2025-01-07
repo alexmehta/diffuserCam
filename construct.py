@@ -88,6 +88,7 @@ if __name__ == "__main__":
     axs[1].set_title('Raw data')
     axs[2].imshow(final_im.cpu().numpy(), cmap='gray')
     axs[2].set_title('Final Reconstruction')
+    plt.savefig('comparison.png')
 
    
     if args.show_imgs:
